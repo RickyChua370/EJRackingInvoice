@@ -147,7 +147,13 @@
       body: JSON.stringify(body),
     });
     const json = await res.json();
-    if (json.error) throw new Error(json.error.message || 'Vision API error');
+    if (json.error) {
+      const msg = json.error.message || 'Vision API error';
+      if (json.error.status === 'PERMISSION_DENIED' || /API key not valid/i.test(msg)) {
+        throw new Error('Vision API rejected the key. Check that the key is correct and the Cloud Vision API is enabled for its project. (' + msg + ')');
+      }
+      throw new Error(msg);
+    }
     const r = json.responses && json.responses[0];
     if (r && r.error) throw new Error(r.error.message);
     return (r && r.fullTextAnnotation && r.fullTextAnnotation.text) || '';
@@ -664,4 +670,13 @@
   // ---------- Init ----------
   fillSettingsForm();
   loadInvoiceIntoEditor(blankInvoice());
+
+  // If a Cloud Vision key is configured, default to the Cloud OCR engine
+  // (much better for cursive). Falls back to on-device if no key.
+  (function preferCloudIfKey() {
+    const cloudRadio = document.querySelector('input[name="ocrEngine"][value="cloud"]');
+    const offlineRadio = document.querySelector('input[name="ocrEngine"][value="offline"]');
+    if (settings.visionKey && cloudRadio) { cloudRadio.checked = true; }
+    else if (offlineRadio) { offlineRadio.checked = true; }
+  })();
 })();
