@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#1f3a5f" />
+  <title>EJ Racking Invoice</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="stylesheet" href="styles.css" />
+
+  <!-- Libraries via CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <span class="logo">EJ</span>
+      <div>
+        <h1>EJ Racking Invoice</h1>
+        <p class="tagline">Photo &rarr; Invoice &rarr; PDF</p>
+      </div>
+    </div>
+    <nav class="tabs">
+      <button class="tab active" data-view="scan">Scan</button>
+      <button class="tab" data-view="invoice">Invoice</button>
+      <button class="tab" data-view="settings">Settings</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- ============ SCAN VIEW ============ -->
+    <section id="view-scan" class="view active">
+      <div class="card">
+        <h2>1. Capture the handwritten note</h2>
+        <p class="hint">Good light, flat paper, straight angle, in focus. The clearer the photo, the better the OCR.</p>
+        <label class="file-drop" for="photoInput">
+          <input type="file" id="photoInput" accept="image/*" capture="environment" hidden />
+          <span class="file-drop-inner">
+            <span class="big-icon">&#128247;</span>
+            <span>Tap to take a photo or choose an image</span>
+          </span>
+        </label>
+        <div id="previewWrap" class="preview-wrap hidden">
+          <img id="preview" alt="Captured note" />
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>2. Read the text (OCR)</h2>
+        <div class="ocr-engine-row">
+          <label>
+            <input type="radio" name="ocrEngine" value="offline" checked />
+            On-device (free, offline)
+          </label>
+          <label>
+            <input type="radio" name="ocrEngine" value="cloud" />
+            Cloud Vision (better cursive)
+          </label>
+        </div>
+        <button id="runOcrBtn" class="btn primary" disabled>Read the note</button>
+        <div id="ocrProgress" class="progress hidden">
+          <div class="progress-bar"><div id="ocrBar" class="progress-fill"></div></div>
+          <span id="ocrStatus">Starting&hellip;</span>
+        </div>
+        <details class="raw-text hidden" id="rawTextWrap">
+          <summary>Raw OCR text (for reference)</summary>
+          <pre id="rawText"></pre>
+        </details>
+      </div>
+
+      <div class="card" id="parsedWrap" style="display:none">
+        <h2>3. Detected invoices</h2>
+        <p class="hint">The note was split into the invoices below. Tap "Edit this invoice" to review and fix before exporting.</p>
+        <div id="parsedList"></div>
+      </div>
+    </section>
+
+    <!-- ============ INVOICE VIEW ============ -->
+    <section id="view-invoice" class="view">
+      <div class="card">
+        <div class="invoice-toolbar">
+          <h2>Edit invoice</h2>
+          <div class="toolbar-actions">
+            <button id="newInvoiceBtn" class="btn ghost">New blank</button>
+            <button id="exportPdfBtn" class="btn primary">Export PDF</button>
+          </div>
+        </div>
+
+        <div class="two-col">
+          <div class="col">
+            <div class="field">
+              <label>Invoice No.</label>
+              <input type="text" id="invNo" />
+            </div>
+            <div class="field">
+              <label>Date</label>
+              <input type="text" id="invDate" placeholder="dd/mm/yyyy" />
+            </div>
+            <div class="field">
+              <label>Terms</label>
+              <input type="text" id="invTerms" value="C.O.D" />
+            </div>
+            <div class="field">
+              <label>Your Ref</label>
+              <input type="text" id="invYourRef" />
+            </div>
+            <div class="field">
+              <label>D/O No</label>
+              <input type="text" id="invDoNo" />
+            </div>
+          </div>
+          <div class="col">
+            <div class="field">
+              <label>Customer Name</label>
+              <input type="text" id="custName" />
+            </div>
+            <div class="field">
+              <label>Customer Address</label>
+              <textarea id="custAddress" rows="3"></textarea>
+            </div>
+            <div class="field">
+              <label>Attn</label>
+              <input type="text" id="custAttn" />
+            </div>
+            <div class="field">
+              <label>Tel</label>
+              <input type="text" id="custTel" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="invoice-toolbar">
+          <h3>Line items</h3>
+          <button id="addItemBtn" class="btn ghost small">+ Add item</button>
+        </div>
+        <div class="items-scroll">
+          <table class="items-table" id="itemsTable">
+            <thead>
+              <tr>
+                <th>No</th>
+                <th>Item Code</th>
+                <th class="desc-col">Description</th>
+                <th>Qty</th>
+                <th>Unit</th>
+                <th>Price/Unit</th>
+                <th>Discount</th>
+                <th>Amount</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="itemsBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card totals-card">
+        <div class="field inline">
+          <label>Sales Tax (%)</label>
+          <input type="number" id="taxRate" value="0" step="0.01" min="0" />
+        </div>
+        <div class="totals">
+          <div class="total-row"><span>Gross (RM)</span><strong id="grossOut">0.00</strong></div>
+          <div class="total-row"><span>Sales Tax (RM)</span><strong id="taxOut">0.00</strong></div>
+          <div class="total-row grand"><span>Total (RM)</span><strong id="totalOut">0.00</strong></div>
+        </div>
+        <div class="field">
+          <label>Amount in words</label>
+          <input type="text" id="amountWords" readonly />
+        </div>
+      </div>
+
+      <div class="card photo-ref-card hidden" id="photoRefCard">
+        <h3>Original note (for reference)</h3>
+        <img id="photoRef" alt="Original note" />
+      </div>
+    </section>
+
+    <!-- ============ SETTINGS VIEW ============ -->
+    <section id="view-settings" class="view">
+      <div class="card">
+        <h2>Company details</h2>
+        <p class="hint">These appear on every invoice. Saved on this device only.</p>
+        <div class="field"><label>Company name</label><input type="text" id="setCompanyName" /></div>
+        <div class="field"><label>Registration no.</label><input type="text" id="setRegNo" /></div>
+        <div class="field"><label>Address</label><textarea id="setAddress" rows="2"></textarea></div>
+        <div class="field"><label>Tel / Fax</label><input type="text" id="setTel" /></div>
+        <div class="field"><label>GST No.</label><input type="text" id="setGst" /></div>
+        <div class="field"><label>Currency symbol</label><input type="text" id="setCurrency" value="RM" /></div>
+        <div class="field"><label>Amount-in-words currency</label><input type="text" id="setCurrencyWords" value="Ringgit Malaysia" /></div>
+      </div>
+
+      <div class="card">
+        <h2>Invoice numbering</h2>
+        <div class="field inline">
+          <label>Next invoice no.</label>
+          <input type="number" id="setNextInvNo" />
+        </div>
+        <p class="hint">Auto-increments after each export. You can also edit the number manually on any invoice.</p>
+      </div>
+
+      <div class="card">
+        <h2>Cloud OCR (optional)</h2>
+        <p class="hint">For better cursive recognition, paste a Google Cloud Vision API key. Free tier ~1,000 scans/month. Leave blank to use on-device OCR only.</p>
+        <div class="field"><label>Google Cloud Vision API key</label><input type="password" id="setVisionKey" placeholder="AIza&hellip;" /></div>
+      </div>
+
+      <div class="card">
+        <h2>Notes (printed on invoice)</h2>
+        <div class="field"><textarea id="setNotes" rows="3"></textarea></div>
+      </div>
+
+      <button id="saveSettingsBtn" class="btn primary">Save settings</button>
+      <p id="settingsSaved" class="saved-msg hidden">Saved &#10003;</p>
+
+      <div class="card about">
+        <h3>About</h3>
+        <p>Installable PWA. Updates automatically when a new version is published &mdash; just reopen the app.</p>
+        <p class="version">Version <span id="appVersion">1.0.0</span></p>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('sw.js'));
+    }
+  </script>
+</body>
+</html>
