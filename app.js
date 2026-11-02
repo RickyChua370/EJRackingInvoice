@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '1.2.2';
+  const APP_VERSION = '1.3.0';
 
   // ---------- Defaults / storage ----------
   const DEFAULT_SETTINGS = {
@@ -21,6 +21,7 @@
     visionKey: '',
     notes: '1. All cheques should be crossed and made payable to EJ RACKING ENTERPRISE.\n2. Goods sold are neither returnable nor refundable.',
     obRate: 5,
+    obCanvasRate: 5,
     obTransport: 200,
     obDeposit: 500,
   };
@@ -422,22 +423,52 @@
     };
   }
 
-  function cleanDate(s) { return (s || '').replace(/[^0-9\/\-.]/g, '').trim(); }
+  // Keep the raw date-ish portion. We no longer strip letters, so month names
+  // like "25 NOV" survive; we just trim surrounding noise (e.g. times are okay).
+  function cleanDate(s) { return (s || '').trim(); }
 
-  // Inclusive day count between two dd/mm (or dd/mm/yy) dates.
-  function rentalDays(checkIn, checkOut) {
-    const a = parseDMY(checkIn), b = parseDMY(checkOut);
-    if (!a || !b) return 1;
-    const ms = b - a;
-    const days = Math.round(ms / 86400000) + 1; // inclusive of both ends
-    return days > 0 ? days : 1;
+  const MONTHS = {
+    jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+    jul: 6, aug: 7, sep: 8, sept: 8, oct: 9, nov: 10, dec: 11,
+  };
+
+  // Parse a date that may be numeric (25/11, 25-11-2026) OR day + month-name
+  // (25 NOV, 1 DEC, NOV 25). Returns {day, month} (month 0-based) or null.
+  function parseDayMonth(s) {
+    if (!s) return null;
+    const str = String(s);
+    // Numeric dd/mm(/yy)
+    let m = str.match(/\b(\d{1,2})\s*[\/\-.]\s*(\d{1,2})(?:\s*[\/\-.]\s*(\d{2,4}))?/);
+    if (m) {
+      const y = m[3] ? (m[3].length === 2 ? 2000 + +m[3] : +m[3]) : null;
+      return { day: +m[1], month: +m[2] - 1, year: y };
+    }
+    // Day + month name  (e.g. "25 NOV", "25NOV", "1 DEC 2026")
+    m = str.match(/\b(\d{1,2})\s*([A-Za-z]{3,9})\b(?:\s*(\d{4}))?/);
+    if (m && MONTHS[m[2].toLowerCase()] !== undefined) {
+      return { day: +m[1], month: MONTHS[m[2].toLowerCase()], year: m[3] ? +m[3] : null };
+    }
+    // Month name + day  (e.g. "NOV 25")
+    m = str.match(/\b([A-Za-z]{3,9})\s*(\d{1,2})\b(?:\s*(\d{4}))?/);
+    if (m && MONTHS[m[1].toLowerCase()] !== undefined) {
+      return { day: +m[2], month: MONTHS[m[1].toLowerCase()], year: m[3] ? +m[3] : null };
+    }
+    return null;
   }
-  function parseDMY(s) {
-    const m = (s || '').match(/(\d{1,2})[\/\-.](\d{1,2})(?:[\/\-.](\d{2,4}))?/);
-    if (!m) return null;
-    let [_, d, mo, y] = m;
-    const year = y ? (y.length === 2 ? 2000 + +y : +y) : new Date().getFullYear();
-    return new Date(year, +mo - 1, +d);
+
+  // Inclusive day count between check-in and check-out. Handles month names and
+  // year-rollover (e.g. 25 NOV -> 1 DEC = 7 days; 28 DEC -> 3 JAN crosses year).
+  function rentalDays(checkIn, checkOut) {
+    const a = parseDayMonth(checkIn), b = parseDayMonth(checkOut);
+    if (!a || !b) return 1;
+    const baseYear = a.year || new Date().getFullYear();
+    let outYear = b.year || baseYear;
+    // If no explicit out-year and the out-date falls before the in-date, roll to next year.
+    if (!b.year && (b.month < a.month || (b.month === a.month && b.day < a.day))) outYear = baseYear + 1;
+    const start = new Date(baseYear, a.month, a.day);
+    const end = new Date(outYear, b.month, b.day);
+    const days = Math.round((end - start) / 86400000) + 1; // inclusive of both ends
+    return days > 0 ? days : 1;
   }
 
   // Build a quotation (invoice-model) from parsed Offer Bin data + pricing.
@@ -452,36 +483,49 @@
 
     const days = rentalDays(data.checkIn, data.checkOut);
     const qty = data.quantity || 0;
-    const rate = parseNum(pricing.rate);              // RM / unit / day
+    const rate = parseNum(pricing.rate);              // RM / unit / day (offer bin)
     const unitPricePerDay = +(rate * qty).toFixed(2); // price shown per DAY
     const rentalAmount = +(unitPricePerDay * days).toFixed(2);
-    const canvasTxt = data.canvas ? ' + CANVAS' : '';
 
     const items = [];
+    let n = 1;
+    // 1) Offer bin rental (no canvas mixed in)
     items.push({
-      no: 1, code: 'RENTAL',
-      desc: `OFFER BIN ONLY ( USED )${canvasTxt} ${days} DAYS X RM${fmtNum(rate)} X ${qty} UNITS`,
+      no: n++, code: 'RENTAL',
+      desc: `OFFER BIN ONLY ( USED ) ${days} DAYS X RM${fmtNum(rate)} X ${qty} UNITS`,
       qty: days, unit: 'DAYS', price: unitPricePerDay, discount: '', amount: rentalAmount,
     });
+    // 2) Canvas as its OWN line (only when requested). RM/piece/day * qty = per-day price.
+    if (data.canvas) {
+      const canvasRate = parseNum(pricing.canvasRate);         // RM / piece / day
+      const canvasQty = data.quantity || 0;                    // same as bins
+      const canvasPerDay = +(canvasRate * canvasQty).toFixed(2);
+      const canvasAmount = +(canvasPerDay * days).toFixed(2);
+      items.push({
+        no: n++, code: 'RENTAL',
+        desc: `CANVAS ${days} DAYS X RM${fmtNum(canvasRate)} X ${canvasQty} PCS`,
+        qty: days, unit: 'DAYS', price: canvasPerDay, discount: '', amount: canvasAmount,
+      });
+    }
     const transport = parseNum(pricing.transport);
     items.push({
-      no: 2, code: 'SERVICES',
+      no: n++, code: 'SERVICES',
       desc: 'SERVICES - TRANSPORT ( DAY ONLY 10AM - 6.30PM )',
       qty: 1, unit: 'UNIT', price: transport, discount: '', amount: transport,
     });
     const deposit = parseNum(pricing.deposit);
     items.push({
-      no: 3, code: 'OTHER',
+      no: n++, code: 'OTHER',
       desc: 'FULL PAYMENT + DEPOSIT ( WILL REFUND )',
       qty: 1, unit: 'UNIT', price: deposit, discount: '', amount: deposit,
     });
     items.push({
-      no: 4, code: 'OTHER',
+      no: n++, code: 'OTHER',
       desc: 'INCLUDING INSTALLATION / DISMANTLE ( DAY ONLY , FOC )',
       qty: 1, unit: 'UNIT', price: 0, discount: '', amount: 0,
     });
     items.push({
-      no: 5, code: 'OTHER',
+      no: n++, code: 'OTHER',
       desc: `DELIVERY ADDRESS ; ${(data.address || '').toUpperCase()}`,
       qty: 1, unit: 'UNIT', price: 0, discount: '', amount: 0,
     });
@@ -514,6 +558,9 @@
     $('#obRate').value = settings.obRate;
     $('#obTransport').value = settings.obTransport;
     $('#obDeposit').value = settings.obDeposit;
+    $('#obCanvasRate').value = settings.obCanvasRate;
+    // Only show the canvas rate field when the customer requested canvas.
+    $('#obCanvasRow').style.display = d.canvas ? '' : 'none';
     $('#offerBinPreviewCard').style.display = 'block';
     $('#offerBinPreviewCard').scrollIntoView({ behavior: 'smooth' });
   });
@@ -522,6 +569,7 @@
     if (!pendingOfferBin) return;
     const pricing = {
       rate: $('#obRate').value,
+      canvasRate: $('#obCanvasRate').value,
       transport: $('#obTransport').value,
       deposit: $('#obDeposit').value,
     };
@@ -966,6 +1014,7 @@
     $('#setNextQtNo').value = settings.nextQtNo;
     $('#setQtPrefix').value = settings.qtPrefix;
     $('#setObRate').value = settings.obRate;
+    $('#setObCanvasRate').value = settings.obCanvasRate;
     $('#setObTransport').value = settings.obTransport;
     $('#setObDeposit').value = settings.obDeposit;
     $('#setVisionKey').value = settings.visionKey;
@@ -985,6 +1034,7 @@
     settings.nextQtNo = parseInt($('#setNextQtNo').value, 10) || settings.nextQtNo;
     settings.qtPrefix = $('#setQtPrefix').value || 'QT-';
     settings.obRate = parseNum($('#setObRate').value);
+    settings.obCanvasRate = parseNum($('#setObCanvasRate').value);
     settings.obTransport = parseNum($('#setObTransport').value);
     settings.obDeposit = parseNum($('#setObDeposit').value);
     settings.visionKey = $('#setVisionKey').value.trim();
