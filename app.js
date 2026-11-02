@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '1.2.0';
+  const APP_VERSION = '1.2.1';
 
   // ---------- Defaults / storage ----------
   const DEFAULT_SETTINGS = {
@@ -738,15 +738,17 @@
     if (settings.tel) { doc.text(settings.tel, centerX, y, { align: 'center' }); y += 4.3; }
     if (settings.gst) { doc.text('(GST No.: ' + settings.gst + ')', centerX, y, { align: 'center' }); y += 4.3; }
 
-    // Document title (right, serif bold) — vertically near the header top
-    doc.setFont('times', 'bold'); doc.setFontSize(13);
-    const title = (isQuote ? 'QUOTATION : ' : 'INVOICE : ') + (activeInvoice.invNo || '');
-    doc.text(title, pageW - M, M + 6, { align: 'right' });
-
     y += 2;
     doc.setDrawColor(40); doc.setLineWidth(0.5);
     doc.line(M, y, pageW - M, y);
     y += 6;
+
+    const title = (isQuote ? 'QUOTATION : ' : 'INVOICE : ') + (activeInvoice.invNo || '');
+
+    // Document title (right, serif bold) at the top of the right column
+    doc.setFont('times', 'bold'); doc.setFontSize(13);
+    doc.text(title, pageW - M, y + 2, { align: 'right' });
+    y += 8;
 
     // ---- Bill-to (left, with L-bracket) + meta (right) ----
     const topY = y;
