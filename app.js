@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '1.3.0';
+  const APP_VERSION = '1.3.1';
 
   // ---------- Defaults / storage ----------
   const DEFAULT_SETTINGS = {
@@ -873,6 +873,8 @@
       fmtMoney(it.price), it.discount || '',
       fmtMoney(it.amount),
     ]);
+    // Capture the Price/Unit column geometry so the Total (RM) box can align under it.
+    const priceCol = { x: null, w: null };
     doc.autoTable({
       startY: y,
       head: [['No', 'Item Code', 'Description', 'Qty', 'Unit', 'Price/Unit', 'Disc', 'Amount']],
@@ -883,6 +885,9 @@
       // Draw only the header underline and a top line; keep body clean like the sample.
       didParseCell: function (data) {
         if (data.section === 'head') { data.cell.styles.lineWidth = { top: 0.3, bottom: 0.3, left: 0, right: 0 }; data.cell.styles.lineColor = [40, 40, 40]; }
+      },
+      didDrawCell: function (data) {
+        if (data.column.index === 5 && priceCol.x === null) { priceCol.x = data.cell.x; priceCol.w = data.cell.width; }
       },
       columnStyles: {
         0: { cellWidth: 9, halign: 'center' },
@@ -913,12 +918,19 @@
       doc.setFont('times', 'bold'); doc.text('Delivery Term', M, ty); doc.setFont('times', 'normal'); doc.text(': ' + (activeInvoice.qtDelivery || ''), M + 30, ty); ty += 5.5;
       doc.setFont('times', 'bold'); doc.text('Payment Term', M, ty); doc.setFont('times', 'normal'); doc.text(': ' + (activeInvoice.qtPayment || ''), M + 30, ty); ty += 5.5;
 
-      // Total (RM) label + boxed value on the right, aligned with the terms block
+      // Total (RM): label sits under the Price/Unit column; the box is thin & long,
+      // spanning from the Price/Unit column across to the right page margin.
+      const boxLeft = (priceCol.x != null) ? priceCol.x : (pageW - 62);
+      const boxRight = pageW - M;
+      const boxTopY = termsY - 2;
+      const boxH = 6.5;
       doc.setFont('times', 'bold'); doc.setFontSize(11);
-      doc.text('Total (' + cur + ')', pageW - 62, termsY + 3);
+      // Label centered above/left within the Price/Unit column position
+      doc.text('Total (' + cur + ')', boxLeft, termsY + 2.5);
       doc.setDrawColor(40); doc.setLineWidth(0.4);
-      doc.rect(pageW - 37, termsY - 2.5, 25, 8);
-      doc.text(fmtMoney(activeInvoice.total), pageW - 14, termsY + 3, { align: 'right' });
+      const valBoxLeft = boxLeft + 30;
+      doc.rect(valBoxLeft, boxTopY, boxRight - valBoxLeft, boxH);
+      doc.text(fmtMoney(activeInvoice.total), boxRight - 2, termsY + 2.5, { align: 'right' });
 
       ty += 2;
       doc.setFont('times', 'bold'); doc.setFontSize(9);
@@ -927,16 +939,20 @@
       doc.text('We hope that our quotation is favourable to you and looking forward to receive your valued orders in due course.', M, ty); ty += 5.5;
       doc.text('Thank and regards.', M, ty); ty += 11;
 
+      // "Yours faithfully," (left) and the confirmation block (right) share the same baseline.
+      const confirmX = pageW - 82;
       doc.text('Yours faithfully,', M, ty);
-      doc.text('We confirm the order by accepting the terms', pageW - 82, ty);
-      doc.text('& conditions stated above.', pageW - 82, ty + 4.5);
+      doc.text('We confirm the order by accepting the terms', confirmX, ty);
+      doc.text('& conditions stated above.', confirmX, ty + 4.5);
       ty += 24;
       doc.setLineWidth(0.3); doc.setDrawColor(120);
+      // Left signature line
       doc.line(M, ty, M + 58, ty);
       doc.text('Authorised Signature', M, ty + 4.5);
-      doc.line(pageW - 72, ty, pageW - 12, ty);
-      doc.text('Person incharge :', pageW - 72, ty + 4.5);
-      doc.text('Date :', pageW - 72, ty + 9.5);
+      // Customer signature line aligned under the confirmation block
+      doc.line(confirmX, ty, pageW - M, ty);
+      doc.text('Person In Charge :', confirmX, ty + 4.5);
+      doc.text('Date :', confirmX, ty + 9.5);
     } else {
       // ----- Invoice footer -----
       doc.setFont('times', 'normal'); doc.setFontSize(9.5);
