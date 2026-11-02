@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '1.0.0';
+  const APP_VERSION = '1.1.0';
 
   // ---------- Defaults / storage ----------
   const DEFAULT_SETTINGS = {
@@ -16,8 +16,13 @@
     currency: 'RM',
     currencyWords: 'Ringgit Malaysia',
     nextInvNo: 4420,
+    nextQtNo: 173,
+    qtPrefix: 'QT-',
     visionKey: '',
     notes: '1. All cheques should be crossed and made payable to EJ RACKING ENTERPRISE.\n2. Goods sold are neither returnable nor refundable.',
+    obRate: 5,
+    obTransport: 200,
+    obDeposit: 500,
   };
 
   const SETTINGS_KEY = 'ejr_settings_v1';
@@ -321,11 +326,14 @@
   function blankItem(no) {
     return { no: no || 1, code: 'OTHER', desc: '', qty: 1, unit: 'UNIT', price: 0, discount: '', amount: 0 };
   }
-  function blankInvoice() {
+  function blankInvoice(docType) {
     return {
+      docType: docType || 'invoice', // 'invoice' | 'quotation'
       invNo: '', date: '', terms: 'C.O.D', yourRef: '', doNo: '',
       custName: '', custAddress: '', custAttn: '', custTel: '',
       items: [blankItem(1)], taxRate: 0, gross: 0, tax: 0, total: 0,
+      // quotation-only
+      qtValidity: '', qtDelivery: '', qtPayment: 'C.O.D.',
     };
   }
 
@@ -372,12 +380,171 @@
     return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
 
+  // ---------- Offer Bin quotation ----------
+  const OFFER_BIN_SAMPLE = [
+    'Company Name: Private Structure International Sdn Bhd',
+    'Check In Date: 03/09',
+    'Set-Up Time: 03/09',
+    'Check Out Date: 06/09',
+    'Dismantle Time: 07/09',
+    'Quantity: 40',
+    'Canvas: Yes / No : NO',
+    'Delivery Address: Taman Shamelin Perkasa Cheras',
+    'Contact: 0197905098',
+    'Person in Charge: Fion',
+  ].join('\n');
+
+  // Parse the fixed customer template into a structured object.
+  function parseOfferBin(text) {
+    const get = (label) => {
+      const re = new RegExp(label + '\\s*:?\\s*(.*)', 'i');
+      const line = (text || '').split(/\r?\n/).find((l) => re.test(l));
+      if (!line) return '';
+      let v = line.replace(re, '$1').trim();
+      return v;
+    };
+    // Canvas may be "Yes / No : NO" — take the last Yes/No token.
+    let canvasRaw = get('Canvas');
+    const canvasMatch = (canvasRaw.match(/\b(yes|no)\b/gi) || []);
+    const canvas = canvasMatch.length ? /yes/i.test(canvasMatch[canvasMatch.length - 1]) : false;
+
+    return {
+      company: get('Company Name'),
+      checkIn: cleanDate(get('Check In Date')),
+      setUp: cleanDate(get('Set-?Up Time')),
+      checkOut: cleanDate(get('Check Out Date')),
+      dismantle: cleanDate(get('Dismantle Time')),
+      quantity: parseInt((get('Quantity').match(/\d+/) || [0])[0], 10) || 0,
+      canvas: canvas,
+      address: get('Delivery Address'),
+      contact: get('Contact'),
+      pic: get('Person in Charge'),
+    };
+  }
+
+  function cleanDate(s) { return (s || '').replace(/[^0-9\/\-.]/g, '').trim(); }
+
+  // Inclusive day count between two dd/mm (or dd/mm/yy) dates.
+  function rentalDays(checkIn, checkOut) {
+    const a = parseDMY(checkIn), b = parseDMY(checkOut);
+    if (!a || !b) return 1;
+    const ms = b - a;
+    const days = Math.round(ms / 86400000) + 1; // inclusive of both ends
+    return days > 0 ? days : 1;
+  }
+  function parseDMY(s) {
+    const m = (s || '').match(/(\d{1,2})[\/\-.](\d{1,2})(?:[\/\-.](\d{2,4}))?/);
+    if (!m) return null;
+    let [_, d, mo, y] = m;
+    const year = y ? (y.length === 2 ? 2000 + +y : +y) : new Date().getFullYear();
+    return new Date(year, +mo - 1, +d);
+  }
+
+  // Build a quotation (invoice-model) from parsed Offer Bin data + pricing.
+  function buildOfferBinQuote(data, pricing) {
+    const quote = blankInvoice('quotation');
+    quote.custName = (data.company || '').toUpperCase();
+    quote.custAddress = data.address || '';
+    quote.custAttn = data.pic ? ('MS/MR ' + data.pic).toUpperCase() : '';
+    quote.custTel = data.contact || '';
+    quote.date = formatToday();
+    quote.qtPayment = 'C.O.D.';
+
+    const days = rentalDays(data.checkIn, data.checkOut);
+    const qty = data.quantity || 0;
+    const rate = parseNum(pricing.rate);              // RM / unit / day
+    const unitPricePerDay = +(rate * qty).toFixed(2); // price shown per DAY
+    const rentalAmount = +(unitPricePerDay * days).toFixed(2);
+    const canvasTxt = data.canvas ? ' + CANVAS' : '';
+
+    const items = [];
+    items.push({
+      no: 1, code: 'RENTAL',
+      desc: `OFFER BIN ONLY ( USED )${canvasTxt} ${days} DAYS X RM${fmtNum(rate)} X ${qty} UNITS`,
+      qty: days, unit: 'DAYS', price: unitPricePerDay, discount: '', amount: rentalAmount,
+    });
+    const transport = parseNum(pricing.transport);
+    items.push({
+      no: 2, code: 'SERVICES',
+      desc: 'SERVICES - TRANSPORT ( DAY ONLY 10AM - 6.30PM )',
+      qty: 1, unit: 'UNIT', price: transport, discount: '', amount: transport,
+    });
+    const deposit = parseNum(pricing.deposit);
+    items.push({
+      no: 3, code: 'OTHER',
+      desc: 'FULL PAYMENT + DEPOSIT ( WILL REFUND )',
+      qty: 1, unit: 'UNIT', price: deposit, discount: '', amount: deposit,
+    });
+    items.push({
+      no: 4, code: 'OTHER',
+      desc: 'INCLUDING INSTALLATION / DISMANTLE ( DAY ONLY , FOC )',
+      qty: 1, unit: 'UNIT', price: 0, discount: '', amount: 0,
+    });
+    items.push({
+      no: 5, code: 'OTHER',
+      desc: `DELIVERY ADDRESS ; ${(data.address || '').toUpperCase()}`,
+      qty: 1, unit: 'UNIT', price: 0, discount: '', amount: 0,
+    });
+    quote.items = items;
+    quote.taxRate = 0;
+    recalc(quote);
+    return quote;
+  }
+
+  function formatToday() {
+    const d = new Date();
+    return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`;
+  }
+
+  // Offer Bin UI wiring
+  let pendingOfferBin = null;
+  $('#fillSampleBtn').addEventListener('click', () => { $('#offerBinInput').value = OFFER_BIN_SAMPLE; });
+
+  $('#genQuoteBtn').addEventListener('click', () => {
+    const text = $('#offerBinInput').value.trim();
+    if (!text) { toast('Paste the customer message first.'); return; }
+    pendingOfferBin = parseOfferBin(text);
+    const d = pendingOfferBin;
+    const days = rentalDays(d.checkIn, d.checkOut);
+    $('#offerBinSummary').innerHTML =
+      `<strong>${escapeHtml(d.company || '(no company)')}</strong><br>` +
+      `Qty: ${d.quantity} · Canvas: ${d.canvas ? 'Yes' : 'No'} · ` +
+      `Check-in ${escapeHtml(d.checkIn || '?')} → Check-out ${escapeHtml(d.checkOut || '?')} = <strong>${days} day(s)</strong><br>` +
+      `PIC: ${escapeHtml(d.pic || '-')} · Tel: ${escapeHtml(d.contact || '-')}`;
+    $('#obRate').value = settings.obRate;
+    $('#obTransport').value = settings.obTransport;
+    $('#obDeposit').value = settings.obDeposit;
+    $('#offerBinPreviewCard').style.display = 'block';
+    $('#offerBinPreviewCard').scrollIntoView({ behavior: 'smooth' });
+  });
+
+  $('#buildQuoteBtn').addEventListener('click', () => {
+    if (!pendingOfferBin) return;
+    const pricing = {
+      rate: $('#obRate').value,
+      transport: $('#obTransport').value,
+      deposit: $('#obDeposit').value,
+    };
+    const quote = buildOfferBinQuote(pendingOfferBin, pricing);
+    loadInvoiceIntoEditor(quote);
+    goTo('invoice');
+    toast('Quotation generated. Review & edit, then Export PDF.');
+  });
+
   // ---------- Invoice editor ----------
   let activeInvoice = blankInvoice();
 
+  function defaultDocNumber(docType) {
+    return docType === 'quotation'
+      ? (settings.qtPrefix || 'QT-') + String(settings.nextQtNo).padStart(5, '0')
+      : String(settings.nextInvNo);
+  }
+
   function loadInvoiceIntoEditor(inv) {
     activeInvoice = inv;
-    if (!activeInvoice.invNo) activeInvoice.invNo = String(settings.nextInvNo);
+    if (!activeInvoice.docType) activeInvoice.docType = 'invoice';
+    if (!activeInvoice.invNo) activeInvoice.invNo = defaultDocNumber(activeInvoice.docType);
+    $('#docType').value = activeInvoice.docType;
     $('#invNo').value = activeInvoice.invNo;
     $('#invDate').value = activeInvoice.date || '';
     $('#invTerms').value = activeInvoice.terms || '';
@@ -388,12 +555,26 @@
     $('#custAttn').value = activeInvoice.custAttn || '';
     $('#custTel').value = activeInvoice.custTel || '';
     $('#taxRate').value = activeInvoice.taxRate || 0;
+    $('#qtValidity').value = activeInvoice.qtValidity || '';
+    $('#qtDelivery').value = activeInvoice.qtDelivery || '';
+    $('#qtPayment').value = activeInvoice.qtPayment || 'C.O.D.';
+    applyDocTypeUI(activeInvoice.docType);
     renderItems();
     updateTotals();
     if (currentImageDataUrl) {
       $('#photoRef').src = currentImageDataUrl;
       $('#photoRefCard').classList.remove('hidden');
     }
+  }
+
+  // Show/hide fields and labels based on document type.
+  function applyDocTypeUI(docType) {
+    const isQuote = docType === 'quotation';
+    document.querySelectorAll('.invoice-only').forEach((el) => { el.style.display = isQuote ? 'none' : ''; });
+    document.querySelectorAll('.quotation-only').forEach((el) => { el.style.display = isQuote ? '' : 'none'; });
+    $('#docEditTitle').textContent = isQuote ? 'Edit quotation' : 'Edit invoice';
+    document.querySelectorAll('.doc-num-label').forEach((el) => { el.textContent = isQuote ? 'Quotation' : 'Invoice'; });
+    $('#convertBtn').style.display = isQuote ? '' : 'none';
   }
 
   // Bind header fields
@@ -406,6 +587,40 @@
   Object.entries(fieldBindings).forEach(([sel, key]) => {
     $(sel).addEventListener('input', (e) => { activeInvoice[key] = e.target.value; });
   });
+
+  // Quotation footer bindings
+  $('#qtValidity').addEventListener('input', (e) => { activeInvoice.qtValidity = e.target.value; });
+  $('#qtDelivery').addEventListener('input', (e) => { activeInvoice.qtDelivery = e.target.value; });
+  $('#qtPayment').addEventListener('input', (e) => { activeInvoice.qtPayment = e.target.value; });
+
+  // Document type switch
+  $('#docType').addEventListener('change', (e) => {
+    const newType = e.target.value;
+    activeInvoice.docType = newType;
+    // Re-number to the series default only if the current number looks like the
+    // OTHER series' auto number (avoid clobbering a manually typed number).
+    const looksQuote = /^[A-Za-z]/.test(activeInvoice.invNo || '');
+    if ((newType === 'quotation') !== looksQuote) {
+      activeInvoice.invNo = defaultDocNumber(newType);
+      $('#invNo').value = activeInvoice.invNo;
+    }
+    applyDocTypeUI(newType);
+    updateTotals();
+  });
+
+  // Convert quotation -> invoice
+  $('#convertBtn').addEventListener('click', () => {
+    if (activeInvoice.docType !== 'quotation') return;
+    activeInvoice.docType = 'invoice';
+    activeInvoice.invNo = defaultDocNumber('invoice');
+    // Drop the refundable-deposit line when converting (it's not billed on an invoice).
+    activeInvoice.items = activeInvoice.items.filter((it) => !/deposit/i.test(it.desc));
+    activeInvoice.items.forEach((it, i) => { it.no = i + 1; });
+    recalc(activeInvoice);
+    loadInvoiceIntoEditor(activeInvoice);
+    toast('Converted to invoice. Review the deposit/line items before export.');
+  });
+
   $('#taxRate').addEventListener('input', (e) => {
     activeInvoice.taxRate = parseNum(e.target.value);
     recalc(activeInvoice); updateTotals();
@@ -516,9 +731,12 @@
     if (settings.tel) { doc.text(settings.tel, M, y); y += 4.5; }
     if (settings.gst) { doc.text('(GST No.: ' + settings.gst + ')', M, y); y += 4.5; }
 
-    // INVOICE title
+    const isQuote = activeInvoice.docType === 'quotation';
+
+    // Document title
     doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
-    doc.text('INVOICE : ' + (activeInvoice.invNo || ''), pageW - M, M + 2, { align: 'right' });
+    const title = (isQuote ? 'QUOTATION : ' : 'INVOICE : ') + (activeInvoice.invNo || '');
+    doc.text(title, pageW - M, M + 2, { align: 'right' });
 
     y += 2;
     doc.setDrawColor(31, 58, 95); doc.setLineWidth(0.4);
@@ -537,7 +755,13 @@
     // meta right column
     const metaX = pageW - 70;
     let my = topY;
-    const meta = [
+    const meta = isQuote ? [
+      ['Your Ref', activeInvoice.yourRef || ''],
+      ['Our Ref', activeInvoice.doNo || ''],
+      ['C. C.', ''],
+      ['Date', activeInvoice.date || ''],
+      ['Page', '1 of 1'],
+    ] : [
       ['Your Ref', activeInvoice.yourRef || ''],
       ['Our D/O No', activeInvoice.doNo || ''],
       ['Terms', activeInvoice.terms || ''],
@@ -552,6 +776,13 @@
     });
 
     y = Math.max(y, my) + 3;
+
+    // Quotation intro line
+    if (isQuote) {
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+      doc.text('Thank you for your Inquiry. We are pleased to submit our quote as follows:', M, y);
+      y += 5;
+    }
 
     // Items table
     const cur = settings.currency;
@@ -583,44 +814,90 @@
 
     let ty = doc.lastAutoTable.finalY + 6;
 
-    // Amount in words (left) + totals (right)
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-    const words = amountToWords(activeInvoice.total, settings.currencyWords);
-    const wLines = doc.splitTextToSize(words, pageW - 80);
-    doc.text(wLines, M, ty);
+    if (isQuote) {
+      // ----- Quotation footer -----
+      // Terms (left) + Total (right)
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+      const termsY = ty;
+      doc.text('Validity', M, ty); doc.setFont('helvetica', 'normal'); doc.text(': ' + (activeInvoice.qtValidity || ''), M + 28, ty); ty += 5;
+      doc.setFont('helvetica', 'bold'); doc.text('Delivery Term', M, ty); doc.setFont('helvetica', 'normal'); doc.text(': ' + (activeInvoice.qtDelivery || ''), M + 28, ty); ty += 5;
+      doc.setFont('helvetica', 'bold'); doc.text('Payment Term', M, ty); doc.setFont('helvetica', 'normal'); doc.text(': ' + (activeInvoice.qtPayment || ''), M + 28, ty); ty += 5;
 
-    const tX = pageW - 70, vX = pageW - M;
-    const totals = [
-      ['Gross (' + cur + ')', fmtMoney(activeInvoice.gross)],
-      ['Sales Tax (' + cur + ')', fmtMoney(activeInvoice.tax)],
-      ['Total (' + cur + ')', fmtMoney(activeInvoice.total)],
-    ];
-    totals.forEach(([k, v], i) => {
-      if (i === 2) doc.setFont('helvetica', 'bold'); else doc.setFont('helvetica', 'normal');
-      doc.text(k, tX, ty); doc.text(v, vX, ty, { align: 'right' });
-      ty += 5;
-    });
+      // Total box (right), aligned with terms
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
+      doc.text('Total (' + cur + ')', pageW - 60, termsY + 2);
+      doc.setDrawColor(60); doc.setLineWidth(0.3);
+      doc.rect(pageW - 35, termsY - 3, 23, 7);
+      doc.text(fmtMoney(activeInvoice.total), pageW - 13, termsY + 2, { align: 'right' });
 
-    ty += 6;
-    // Notes
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
-    doc.text('Notes:', M, ty); ty += 4;
-    (settings.notes || '').split('\n').forEach((ln) => { if (ln) { doc.text(ln, M, ty); ty += 4; } });
+      ty += 2;
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
+      doc.text('Note : Prices are subjected to change without prior notice.', M, ty); ty += 6;
+      doc.setFont('helvetica', 'normal');
+      doc.text('We hope that our quotation is favourable to you and looking forward to receive your valued orders in due course.', M, ty); ty += 5;
+      doc.text('Thank and regards.', M, ty); ty += 10;
 
-    ty += 14;
-    doc.setLineWidth(0.3); doc.setDrawColor(120);
-    doc.line(M, ty, M + 55, ty);
-    doc.text('Authorised Signature', M, ty + 4);
+      doc.text('Yours faithfully,', M, ty);
+      // confirmation block (right)
+      doc.text('We confirm the order by accepting the terms', pageW - 80, ty);
+      doc.text('& conditions stated above.', pageW - 80, ty + 4);
+      ty += 22;
+      doc.setLineWidth(0.3); doc.setDrawColor(120);
+      doc.line(M, ty, M + 55, ty);
+      doc.text('Authorised Signature', M, ty + 4);
+      doc.line(pageW - 70, ty, pageW - 12, ty);
+      doc.text('Person incharge :', pageW - 70, ty + 4);
+      doc.text('Date :', pageW - 70, ty + 9);
+    } else {
+      // ----- Invoice footer -----
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+      const words = amountToWords(activeInvoice.total, settings.currencyWords);
+      const wLines = doc.splitTextToSize(words, pageW - 80);
+      doc.text(wLines, M, ty);
 
-    const fname = `Invoice_${(activeInvoice.invNo || 'draft')}_${(activeInvoice.custName || '').replace(/[^a-z0-9]/gi, '_').slice(0, 20) || 'customer'}.pdf`;
+      const tX = pageW - 70, vX = pageW - M;
+      const totals = [
+        ['Gross (' + cur + ')', fmtMoney(activeInvoice.gross)],
+        ['Sales Tax (' + cur + ')', fmtMoney(activeInvoice.tax)],
+        ['Total (' + cur + ')', fmtMoney(activeInvoice.total)],
+      ];
+      totals.forEach(([k, v], i) => {
+        if (i === 2) doc.setFont('helvetica', 'bold'); else doc.setFont('helvetica', 'normal');
+        doc.text(k, tX, ty); doc.text(v, vX, ty, { align: 'right' });
+        ty += 5;
+      });
+
+      ty += 6;
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
+      doc.text('Notes:', M, ty); ty += 4;
+      (settings.notes || '').split('\n').forEach((ln) => { if (ln) { doc.text(ln, M, ty); ty += 4; } });
+
+      ty += 14;
+      doc.setLineWidth(0.3); doc.setDrawColor(120);
+      doc.line(M, ty, M + 55, ty);
+      doc.text('Authorised Signature', M, ty + 4);
+    }
+
+    const prefix = isQuote ? 'Quotation' : 'Invoice';
+    const fname = `${prefix}_${(activeInvoice.invNo || 'draft')}_${(activeInvoice.custName || '').replace(/[^a-z0-9]/gi, '_').slice(0, 20) || 'customer'}.pdf`;
     doc.save(fname);
 
-    // Advance invoice number (only if it matched the current next number)
-    const num = parseInt(activeInvoice.invNo, 10);
-    if (!isNaN(num) && num >= settings.nextInvNo) {
-      settings.nextInvNo = num + 1;
-      saveSettings(settings);
-      $('#setNextInvNo').value = settings.nextInvNo;
+    // Advance the relevant number series if the exported number matches the next auto value.
+    if (isQuote) {
+      const m = String(activeInvoice.invNo).match(/(\d+)\s*$/);
+      const num = m ? parseInt(m[1], 10) : NaN;
+      if (!isNaN(num) && num >= settings.nextQtNo) {
+        settings.nextQtNo = num + 1;
+        saveSettings(settings);
+        $('#setNextQtNo').value = settings.nextQtNo;
+      }
+    } else {
+      const num = parseInt(activeInvoice.invNo, 10);
+      if (!isNaN(num) && num >= settings.nextInvNo) {
+        settings.nextInvNo = num + 1;
+        saveSettings(settings);
+        $('#setNextInvNo').value = settings.nextInvNo;
+      }
     }
     toast('PDF exported: ' + fname);
   }
@@ -644,6 +921,11 @@
     $('#setCurrency').value = settings.currency;
     $('#setCurrencyWords').value = settings.currencyWords;
     $('#setNextInvNo').value = settings.nextInvNo;
+    $('#setNextQtNo').value = settings.nextQtNo;
+    $('#setQtPrefix').value = settings.qtPrefix;
+    $('#setObRate').value = settings.obRate;
+    $('#setObTransport').value = settings.obTransport;
+    $('#setObDeposit').value = settings.obDeposit;
     $('#setVisionKey').value = settings.visionKey;
     $('#setNotes').value = settings.notes;
     $('#appVersion').textContent = APP_VERSION;
@@ -658,6 +940,11 @@
     settings.currency = $('#setCurrency').value || 'RM';
     settings.currencyWords = $('#setCurrencyWords').value || 'Ringgit Malaysia';
     settings.nextInvNo = parseInt($('#setNextInvNo').value, 10) || settings.nextInvNo;
+    settings.nextQtNo = parseInt($('#setNextQtNo').value, 10) || settings.nextQtNo;
+    settings.qtPrefix = $('#setQtPrefix').value || 'QT-';
+    settings.obRate = parseNum($('#setObRate').value);
+    settings.obTransport = parseNum($('#setObTransport').value);
+    settings.obDeposit = parseNum($('#setObDeposit').value);
     settings.visionKey = $('#setVisionKey').value.trim();
     settings.notes = $('#setNotes').value;
     saveSettings(settings);

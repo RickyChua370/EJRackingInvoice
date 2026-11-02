@@ -28,7 +28,8 @@
     </div>
     <nav class="tabs">
       <button class="tab active" data-view="scan">Scan</button>
-      <button class="tab" data-view="invoice">Invoice</button>
+      <button class="tab" data-view="offerbin">Offer Bin</button>
+      <button class="tab" data-view="invoice">Doc</button>
       <button class="tab" data-view="settings">Settings</button>
     </nav>
   </header>
@@ -81,21 +82,74 @@
       </div>
     </section>
 
-    <!-- ============ INVOICE VIEW ============ -->
+    <!-- ============ OFFER BIN VIEW ============ -->
+    <section id="view-offerbin" class="view">
+      <div class="card">
+        <h2>Offer Bin quotation</h2>
+        <p class="hint">Paste the customer's filled-in template below, then tap "Generate quotation". You can review and edit everything before exporting.</p>
+        <label class="field">
+          <span style="display:block;font-size:13px;font-weight:600;color:var(--muted);margin-bottom:4px;">Customer message</span>
+          <textarea id="offerBinInput" rows="11" placeholder="Company Name: Private Structure International Sdn Bhd
+Check In Date: 03/09
+Set-Up Time: 03/09
+Check Out Date: 06/09
+Dismantle Time: 07/09
+Quantity: 40
+Canvas: Yes / No : NO
+Delivery Address: Taman Shamelin Perkasa Cheras
+Contact: 0197905098
+Person in Charge: Fion"></textarea>
+        </label>
+        <div class="offerbin-btns">
+          <button id="fillSampleBtn" class="btn ghost small">Use sample</button>
+          <button id="genQuoteBtn" class="btn primary">Generate quotation</button>
+        </div>
+      </div>
+
+      <div class="card" id="offerBinPreviewCard" style="display:none">
+        <h3>Detected details</h3>
+        <div id="offerBinSummary" class="parsed-meta"></div>
+        <div class="field inline">
+          <label>Rental rate (RM / unit / day)</label>
+          <input type="number" id="obRate" step="0.01" min="0" value="5" />
+        </div>
+        <div class="field inline">
+          <label>Transport (RM)</label>
+          <input type="number" id="obTransport" step="0.01" min="0" value="200" />
+        </div>
+        <div class="field inline">
+          <label>Deposit (RM)</label>
+          <input type="number" id="obDeposit" step="0.01" min="0" value="500" />
+        </div>
+        <p class="hint">Adjust the rate (based on quantity / canvas) and charges, then build the quotation. You can still edit every line afterwards.</p>
+        <button id="buildQuoteBtn" class="btn primary">Build quotation &rarr;</button>
+      </div>
+    </section>
+
+    <!-- ============ INVOICE / QUOTATION (DOC) VIEW ============ -->
     <section id="view-invoice" class="view">
       <div class="card">
         <div class="invoice-toolbar">
-          <h2>Edit invoice</h2>
+          <h2 id="docEditTitle">Edit document</h2>
           <div class="toolbar-actions">
+            <button id="convertBtn" class="btn ghost" style="display:none">Convert to Invoice</button>
             <button id="newInvoiceBtn" class="btn ghost">New blank</button>
             <button id="exportPdfBtn" class="btn primary">Export PDF</button>
           </div>
         </div>
 
+        <div class="field inline">
+          <label>Document type</label>
+          <select id="docType">
+            <option value="invoice">Invoice</option>
+            <option value="quotation">Quotation</option>
+          </select>
+        </div>
+
         <div class="two-col">
           <div class="col">
             <div class="field">
-              <label>Invoice No.</label>
+              <label><span class="doc-num-label">Invoice</span> No.</label>
               <input type="text" id="invNo" />
             </div>
             <div class="field">
@@ -162,19 +216,26 @@
       </div>
 
       <div class="card totals-card">
-        <div class="field inline">
+        <div class="field inline invoice-only">
           <label>Sales Tax (%)</label>
           <input type="number" id="taxRate" value="0" step="0.01" min="0" />
         </div>
         <div class="totals">
-          <div class="total-row"><span>Gross (RM)</span><strong id="grossOut">0.00</strong></div>
-          <div class="total-row"><span>Sales Tax (RM)</span><strong id="taxOut">0.00</strong></div>
+          <div class="total-row invoice-only"><span>Gross (RM)</span><strong id="grossOut">0.00</strong></div>
+          <div class="total-row invoice-only"><span>Sales Tax (RM)</span><strong id="taxOut">0.00</strong></div>
           <div class="total-row grand"><span>Total (RM)</span><strong id="totalOut">0.00</strong></div>
         </div>
-        <div class="field">
+        <div class="field invoice-only">
           <label>Amount in words</label>
           <input type="text" id="amountWords" readonly />
         </div>
+      </div>
+
+      <div class="card quotation-only" id="quoteFooterCard" style="display:none">
+        <h3>Quotation terms</h3>
+        <div class="field"><label>Validity</label><input type="text" id="qtValidity" /></div>
+        <div class="field"><label>Delivery Term</label><input type="text" id="qtDelivery" /></div>
+        <div class="field"><label>Payment Term</label><input type="text" id="qtPayment" value="C.O.D." /></div>
       </div>
 
       <div class="card photo-ref-card hidden" id="photoRefCard">
@@ -198,12 +259,28 @@
       </div>
 
       <div class="card">
-        <h2>Invoice numbering</h2>
+        <h2>Document numbering</h2>
         <div class="field inline">
           <label>Next invoice no.</label>
           <input type="number" id="setNextInvNo" />
         </div>
-        <p class="hint">Auto-increments after each export. You can also edit the number manually on any invoice.</p>
+        <div class="field inline">
+          <label>Next quotation no.</label>
+          <input type="number" id="setNextQtNo" />
+        </div>
+        <div class="field inline">
+          <label>Quotation prefix</label>
+          <input type="text" id="setQtPrefix" value="QT-" />
+        </div>
+        <p class="hint">Both auto-increment after each export. Quotation numbers look like QT-00172. You can edit any number manually on the document.</p>
+      </div>
+
+      <div class="card">
+        <h2>Offer Bin defaults</h2>
+        <div class="field inline"><label>Rate (RM/unit/day)</label><input type="number" id="setObRate" step="0.01" value="5" /></div>
+        <div class="field inline"><label>Transport (RM)</label><input type="number" id="setObTransport" step="0.01" value="200" /></div>
+        <div class="field inline"><label>Deposit (RM)</label><input type="number" id="setObDeposit" step="0.01" value="500" /></div>
+        <p class="hint">Starting values when generating an Offer Bin quotation. Editable per quote.</p>
       </div>
 
       <div class="card">

@@ -2,7 +2,7 @@
  * Strategy: network-first for app shell so new versions are picked up on reopen,
  * with cache fallback for offline use.
  */
-const CACHE = 'ejr-invoice-v1';
+const CACHE = 'ejr-invoice-v2';
 const ASSETS = [
   './',
   './index.html',
