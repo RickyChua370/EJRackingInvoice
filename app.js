@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '1.2.1';
+  const APP_VERSION = '1.2.2';
 
   // ---------- Defaults / storage ----------
   const DEFAULT_SETTINGS = {
@@ -730,24 +730,39 @@
     const centerX = pageW / 2;
 
     // ---- Centered serif company header (matches EJ Racking letterhead) ----
-    doc.setFont('times', 'bold'); doc.setFontSize(15);
-    doc.text(settings.companyName + (settings.regNo ? `  (${settings.regNo})` : ''), centerX, y + 2, { align: 'center' });
+    // Company name (large) with reg no. as a small suffix on the same line.
+    const nameSize = 15, regSize = 7;
+    doc.setFont('times', 'bold');
+    const nameStr = settings.companyName || '';
+    const regStr = settings.regNo ? ` (${settings.regNo})` : '';
+    doc.setFontSize(nameSize); const nameW = doc.getTextWidth(nameStr);
+    doc.setFontSize(regSize); const regW = regStr ? doc.getTextWidth(regStr) : 0;
+    const totalW = nameW + regW;
+    const nameStartX = centerX - totalW / 2;
+    doc.setFontSize(nameSize);
+    doc.text(nameStr, nameStartX, y + 2, { baseline: 'alphabetic' });
+    if (regStr) { doc.setFontSize(regSize); doc.text(regStr, nameStartX + nameW, y + 2, { baseline: 'alphabetic' }); }
     y += 6;
-    doc.setFont('times', 'normal'); doc.setFontSize(9.5);
-    settings.address.split('\n').forEach((ln) => { doc.text(ln, centerX, y, { align: 'center' }); y += 4.3; });
-    if (settings.tel) { doc.text(settings.tel, centerX, y, { align: 'center' }); y += 4.3; }
-    if (settings.gst) { doc.text('(GST No.: ' + settings.gst + ')', centerX, y, { align: 'center' }); y += 4.3; }
+    // Address lines in ALL CAPS; sized so longer rows extend past the company name.
+    doc.setFont('times', 'normal'); doc.setFontSize(10);
+    settings.address.split('\n').forEach((ln) => { doc.text(ln.toUpperCase(), centerX, y, { align: 'center' }); y += 4.6; });
+    if (settings.tel) { doc.text((settings.tel).toUpperCase(), centerX, y, { align: 'center' }); y += 4.6; }
+    if (settings.gst) { doc.text('(GST No.: ' + settings.gst + ')', centerX, y, { align: 'center' }); y += 4.6; }
 
     y += 2;
     doc.setDrawColor(40); doc.setLineWidth(0.5);
     doc.line(M, y, pageW - M, y);
-    y += 6;
+    y += 7;
 
     const title = (isQuote ? 'QUOTATION : ' : 'INVOICE : ') + (activeInvoice.invNo || '');
 
-    // Document title (right, serif bold) at the top of the right column
+    // Right column (meta) left edge — the customer box occupies everything to its left,
+    // taking more than half the page width.
+    const metaX = pageW * 0.58;
+
+    // Document title (serif bold) left-aligned to the meta column (same x as Your Ref).
     doc.setFont('times', 'bold'); doc.setFontSize(13);
-    doc.text(title, pageW - M, y + 2, { align: 'right' });
+    doc.text(title, metaX, y + 2);
     y += 8;
 
     // ---- Bill-to (left, with L-bracket) + meta (right) ----
@@ -764,21 +779,16 @@
       doc.text(ln.t, M + 3, cy + 3);
       cy += 4.6;
     });
-    // L-shaped brackets around the bill-to block
+    // L-shaped brackets around the bill-to block (wide: up to just before the meta column)
     const boxTop = topY - 1, boxBot = cy + 1, bl = M, brk = 6;
     doc.setDrawColor(40); doc.setLineWidth(0.3);
-    // top-left corner
     doc.line(bl, boxTop, bl + brk, boxTop); doc.line(bl, boxTop, bl, boxTop + brk);
-    // bottom-left corner
     doc.line(bl, boxBot, bl + brk, boxBot); doc.line(bl, boxBot, bl, boxBot - brk);
-    const brRight = M + 85;
-    // top-right corner
+    const brRight = metaX - 6;
     doc.line(brRight - brk, boxTop, brRight, boxTop); doc.line(brRight, boxTop, brRight, boxTop + brk);
-    // bottom-right corner
     doc.line(brRight - brk, boxBot, brRight, boxBot); doc.line(brRight, boxBot, brRight, boxBot - brk);
 
     // meta right column
-    const metaX = pageW - 72;
     let my = topY + 3;
     const meta = isQuote ? [
       ['Your Ref', activeInvoice.yourRef || ''],
