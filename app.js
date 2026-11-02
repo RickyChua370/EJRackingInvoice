@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '1.3.1';
+  const APP_VERSION = '1.3.2';
 
   // ---------- Defaults / storage ----------
   const DEFAULT_SETTINGS = {
@@ -808,35 +808,30 @@
     // taking more than half the page width.
     const metaX = pageW * 0.58;
 
-    // Document title (serif bold) left-aligned to the meta column (same x as Your Ref).
+    // Document title (serif bold) sits high, just below the divider.
     doc.setFont('times', 'bold'); doc.setFontSize(13);
     doc.text(title, metaX, y + 2);
-    y += 8;
 
-    // ---- Bill-to (left, with L-bracket) + meta (right) ----
-    const topY = y;
+    // The bill-to box and meta rows begin just below the title row.
+    const topY = y + 7;
+
+    // ---- Bill-to (left, with L-bracket) ----
+    // Company name, address lines, a blank spacer, then Attn, then Tel/FAX — so the
+    // box spans a taller area (matching the sample).
     const custLines = [];
     if (activeInvoice.custName) custLines.push({ t: activeInvoice.custName, b: true });
     (activeInvoice.custAddress || '').split('\n').forEach((ln) => { if (ln) custLines.push({ t: ln, b: false }); });
-    if (activeInvoice.custAttn) custLines.push({ t: 'Attn : ' + activeInvoice.custAttn, b: false });
-    if (activeInvoice.custTel || true) custLines.push({ t: 'Tel : ' + (activeInvoice.custTel || '') + '        FAX :', b: false });
+    custLines.push({ t: '', b: false });          // spacer gap before Attn
+    custLines.push({ t: 'Attn : ' + (activeInvoice.custAttn || ''), b: false });
+    custLines.push({ t: 'Tel : ' + (activeInvoice.custTel || '') + '        FAX :', b: false });
 
     let cy = topY;
     custLines.forEach((ln) => {
-      doc.setFont('times', ln.b ? 'bold' : 'normal'); doc.setFontSize(9.5);
-      doc.text(ln.t, M + 3, cy + 3);
-      cy += 4.6;
+      if (ln.t) { doc.setFont('times', ln.b ? 'bold' : 'normal'); doc.setFontSize(9.5); doc.text(ln.t, M + 3, cy + 3); }
+      cy += 4.8;
     });
-    // L-shaped brackets around the bill-to block (wide: up to just before the meta column)
-    const boxTop = topY - 1, boxBot = cy + 1, bl = M, brk = 6;
-    doc.setDrawColor(40); doc.setLineWidth(0.3);
-    doc.line(bl, boxTop, bl + brk, boxTop); doc.line(bl, boxTop, bl, boxTop + brk);
-    doc.line(bl, boxBot, bl + brk, boxBot); doc.line(bl, boxBot, bl, boxBot - brk);
-    const brRight = metaX - 6;
-    doc.line(brRight - brk, boxTop, brRight, boxTop); doc.line(brRight, boxTop, brRight, boxTop + brk);
-    doc.line(brRight - brk, boxBot, brRight, boxBot); doc.line(brRight, boxBot, brRight, boxBot - brk);
 
-    // meta right column
+    // meta right column — first row aligns with the top of the bill-to box.
     let my = topY + 3;
     const meta = isQuote ? [
       ['Your Ref', activeInvoice.yourRef || ''],
@@ -858,7 +853,18 @@
       my += 4.8;
     });
 
-    y = Math.max(cy, my) + 4;
+    // L-shaped brackets around the bill-to block. Make the box at least as tall as
+    // the meta column so it reads as a taller box like the sample.
+    const boxBottom = Math.max(cy, my - 4.8 + 1) + 1;
+    const boxTop = topY - 1, bl = M, brk = 6;
+    doc.setDrawColor(40); doc.setLineWidth(0.3);
+    doc.line(bl, boxTop, bl + brk, boxTop); doc.line(bl, boxTop, bl, boxTop + brk);
+    doc.line(bl, boxBottom, bl + brk, boxBottom); doc.line(bl, boxBottom, bl, boxBottom - brk);
+    const brRight = metaX - 6;
+    doc.line(brRight - brk, boxTop, brRight, boxTop); doc.line(brRight, boxTop, brRight, boxTop + brk);
+    doc.line(brRight - brk, boxBottom, brRight, boxBottom); doc.line(brRight, boxBottom, brRight, boxBottom - brk);
+
+    y = Math.max(cy, my, boxBottom) + 4;
 
     // Intro line (both docs use the same phrasing on the sample)
     doc.setFont('times', 'normal'); doc.setFontSize(9.5);
