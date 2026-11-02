@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '1.1.0';
+  const APP_VERSION = '1.1.1';
 
   // ---------- Defaults / storage ----------
   const DEFAULT_SETTINGS = {
@@ -716,6 +716,10 @@
   $('#exportPdfBtn').addEventListener('click', exportPdf);
 
   function exportPdf() {
+    if (!window.jspdf || !window.jspdf.jsPDF) {
+      toast('PDF library did not load. Check your internet connection and reload the app.');
+      return;
+    }
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ unit: 'mm', format: 'a4' });
     const pageW = doc.internal.pageSize.getWidth();
