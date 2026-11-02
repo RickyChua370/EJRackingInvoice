@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '1.1.1';
+  const APP_VERSION = '1.2.0';
 
   // ---------- Defaults / storage ----------
   const DEFAULT_SETTINGS = {
@@ -726,39 +726,58 @@
     const M = 12;
     let y = M;
 
-    // Company header
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(14);
-    doc.text(settings.companyName + (settings.regNo ? `  (${settings.regNo})` : ''), M, y + 2);
-    y += 7;
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-    settings.address.split('\n').forEach((ln) => { doc.text(ln, M, y); y += 4.5; });
-    if (settings.tel) { doc.text(settings.tel, M, y); y += 4.5; }
-    if (settings.gst) { doc.text('(GST No.: ' + settings.gst + ')', M, y); y += 4.5; }
-
     const isQuote = activeInvoice.docType === 'quotation';
+    const centerX = pageW / 2;
 
-    // Document title
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
+    // ---- Centered serif company header (matches EJ Racking letterhead) ----
+    doc.setFont('times', 'bold'); doc.setFontSize(15);
+    doc.text(settings.companyName + (settings.regNo ? `  (${settings.regNo})` : ''), centerX, y + 2, { align: 'center' });
+    y += 6;
+    doc.setFont('times', 'normal'); doc.setFontSize(9.5);
+    settings.address.split('\n').forEach((ln) => { doc.text(ln, centerX, y, { align: 'center' }); y += 4.3; });
+    if (settings.tel) { doc.text(settings.tel, centerX, y, { align: 'center' }); y += 4.3; }
+    if (settings.gst) { doc.text('(GST No.: ' + settings.gst + ')', centerX, y, { align: 'center' }); y += 4.3; }
+
+    // Document title (right, serif bold) — vertically near the header top
+    doc.setFont('times', 'bold'); doc.setFontSize(13);
     const title = (isQuote ? 'QUOTATION : ' : 'INVOICE : ') + (activeInvoice.invNo || '');
-    doc.text(title, pageW - M, M + 2, { align: 'right' });
+    doc.text(title, pageW - M, M + 6, { align: 'right' });
 
     y += 2;
-    doc.setDrawColor(31, 58, 95); doc.setLineWidth(0.4);
+    doc.setDrawColor(40); doc.setLineWidth(0.5);
     doc.line(M, y, pageW - M, y);
-    y += 5;
+    y += 6;
 
-    // Bill-to + meta
+    // ---- Bill-to (left, with L-bracket) + meta (right) ----
     const topY = y;
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
-    doc.text(activeInvoice.custName || '', M, y); y += 4.5;
-    doc.setFont('helvetica', 'normal');
-    (activeInvoice.custAddress || '').split('\n').forEach((ln) => { if (ln) { doc.text(ln, M, y); y += 4.5; } });
-    if (activeInvoice.custAttn) { doc.text('Attn : ' + activeInvoice.custAttn, M, y); y += 4.5; }
-    if (activeInvoice.custTel) { doc.text('Tel : ' + activeInvoice.custTel, M, y); y += 4.5; }
+    const custLines = [];
+    if (activeInvoice.custName) custLines.push({ t: activeInvoice.custName, b: true });
+    (activeInvoice.custAddress || '').split('\n').forEach((ln) => { if (ln) custLines.push({ t: ln, b: false }); });
+    if (activeInvoice.custAttn) custLines.push({ t: 'Attn : ' + activeInvoice.custAttn, b: false });
+    if (activeInvoice.custTel || true) custLines.push({ t: 'Tel : ' + (activeInvoice.custTel || '') + '        FAX :', b: false });
+
+    let cy = topY;
+    custLines.forEach((ln) => {
+      doc.setFont('times', ln.b ? 'bold' : 'normal'); doc.setFontSize(9.5);
+      doc.text(ln.t, M + 3, cy + 3);
+      cy += 4.6;
+    });
+    // L-shaped brackets around the bill-to block
+    const boxTop = topY - 1, boxBot = cy + 1, bl = M, brk = 6;
+    doc.setDrawColor(40); doc.setLineWidth(0.3);
+    // top-left corner
+    doc.line(bl, boxTop, bl + brk, boxTop); doc.line(bl, boxTop, bl, boxTop + brk);
+    // bottom-left corner
+    doc.line(bl, boxBot, bl + brk, boxBot); doc.line(bl, boxBot, bl, boxBot - brk);
+    const brRight = M + 85;
+    // top-right corner
+    doc.line(brRight - brk, boxTop, brRight, boxTop); doc.line(brRight, boxTop, brRight, boxTop + brk);
+    // bottom-right corner
+    doc.line(brRight - brk, boxBot, brRight, boxBot); doc.line(brRight, boxBot, brRight, boxBot - brk);
 
     // meta right column
-    const metaX = pageW - 70;
-    let my = topY;
+    const metaX = pageW - 72;
+    let my = topY + 3;
     const meta = isQuote ? [
       ['Your Ref', activeInvoice.yourRef || ''],
       ['Our Ref', activeInvoice.doNo || ''],
@@ -772,23 +791,21 @@
       ['Date', activeInvoice.date || ''],
       ['Page', '1 of 1'],
     ];
-    doc.setFontSize(9);
+    doc.setFontSize(9.5);
     meta.forEach(([k, v]) => {
-      doc.setFont('helvetica', 'bold'); doc.text(k, metaX, my);
-      doc.setFont('helvetica', 'normal'); doc.text(': ' + v, metaX + 24, my);
-      my += 4.5;
+      doc.setFont('times', 'bold'); doc.text(k, metaX, my);
+      doc.setFont('times', 'normal'); doc.text(': ' + v, metaX + 24, my);
+      my += 4.8;
     });
 
-    y = Math.max(y, my) + 3;
+    y = Math.max(cy, my) + 4;
 
-    // Quotation intro line
-    if (isQuote) {
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-      doc.text('Thank you for your Inquiry. We are pleased to submit our quote as follows:', M, y);
-      y += 5;
-    }
+    // Intro line (both docs use the same phrasing on the sample)
+    doc.setFont('times', 'normal'); doc.setFontSize(9.5);
+    doc.text('Thank you for your Inquiry. We are pleased to submit our quote as follows:', M, y);
+    y += 5;
 
-    // Items table
+    // ---- Items table: plain, minimal borders, serif, roomy ----
     const cur = settings.currency;
     const rows = activeInvoice.items.map((it, i) => [
       i + 1, it.code || '', it.desc || '',
@@ -800,86 +817,95 @@
       startY: y,
       head: [['No', 'Item Code', 'Description', 'Qty', 'Unit', 'Price/Unit', 'Disc', 'Amount']],
       body: rows,
-      theme: 'grid',
-      styles: { fontSize: 8.5, cellPadding: 1.5, lineColor: [200, 200, 200] },
-      headStyles: { fillColor: [31, 58, 95], textColor: 255, fontSize: 8.5 },
+      theme: 'plain',
+      styles: { font: 'times', fontSize: 9, cellPadding: { top: 1.8, bottom: 1.8, left: 1.5, right: 1.5 }, textColor: 20, valign: 'top' },
+      headStyles: { font: 'times', fontStyle: 'bold', fontSize: 9, textColor: 20 },
+      // Draw only the header underline and a top line; keep body clean like the sample.
+      didParseCell: function (data) {
+        if (data.section === 'head') { data.cell.styles.lineWidth = { top: 0.3, bottom: 0.3, left: 0, right: 0 }; data.cell.styles.lineColor = [40, 40, 40]; }
+      },
       columnStyles: {
         0: { cellWidth: 9, halign: 'center' },
-        1: { cellWidth: 20 },
+        1: { cellWidth: 22 },
         2: { cellWidth: 'auto' },
-        3: { cellWidth: 14, halign: 'right' },
+        3: { cellWidth: 12, halign: 'right' },
         4: { cellWidth: 14 },
         5: { cellWidth: 22, halign: 'right' },
-        6: { cellWidth: 16, halign: 'right' },
+        6: { cellWidth: 14, halign: 'right' },
         7: { cellWidth: 24, halign: 'right' },
       },
       margin: { left: M, right: M },
     });
+    // Bottom rule under the whole table
+    {
+      const by = doc.lastAutoTable.finalY;
+      doc.setDrawColor(40); doc.setLineWidth(0.3);
+      doc.line(M, by, pageW - M, by);
+    }
 
     let ty = doc.lastAutoTable.finalY + 6;
 
     if (isQuote) {
       // ----- Quotation footer -----
-      // Terms (left) + Total (right)
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
       const termsY = ty;
-      doc.text('Validity', M, ty); doc.setFont('helvetica', 'normal'); doc.text(': ' + (activeInvoice.qtValidity || ''), M + 28, ty); ty += 5;
-      doc.setFont('helvetica', 'bold'); doc.text('Delivery Term', M, ty); doc.setFont('helvetica', 'normal'); doc.text(': ' + (activeInvoice.qtDelivery || ''), M + 28, ty); ty += 5;
-      doc.setFont('helvetica', 'bold'); doc.text('Payment Term', M, ty); doc.setFont('helvetica', 'normal'); doc.text(': ' + (activeInvoice.qtPayment || ''), M + 28, ty); ty += 5;
+      doc.setFontSize(9.5);
+      doc.setFont('times', 'bold'); doc.text('Validity', M, ty); doc.setFont('times', 'normal'); doc.text(': ' + (activeInvoice.qtValidity || ''), M + 30, ty); ty += 5.5;
+      doc.setFont('times', 'bold'); doc.text('Delivery Term', M, ty); doc.setFont('times', 'normal'); doc.text(': ' + (activeInvoice.qtDelivery || ''), M + 30, ty); ty += 5.5;
+      doc.setFont('times', 'bold'); doc.text('Payment Term', M, ty); doc.setFont('times', 'normal'); doc.text(': ' + (activeInvoice.qtPayment || ''), M + 30, ty); ty += 5.5;
 
-      // Total box (right), aligned with terms
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
-      doc.text('Total (' + cur + ')', pageW - 60, termsY + 2);
-      doc.setDrawColor(60); doc.setLineWidth(0.3);
-      doc.rect(pageW - 35, termsY - 3, 23, 7);
-      doc.text(fmtMoney(activeInvoice.total), pageW - 13, termsY + 2, { align: 'right' });
+      // Total (RM) label + boxed value on the right, aligned with the terms block
+      doc.setFont('times', 'bold'); doc.setFontSize(11);
+      doc.text('Total (' + cur + ')', pageW - 62, termsY + 3);
+      doc.setDrawColor(40); doc.setLineWidth(0.4);
+      doc.rect(pageW - 37, termsY - 2.5, 25, 8);
+      doc.text(fmtMoney(activeInvoice.total), pageW - 14, termsY + 3, { align: 'right' });
 
       ty += 2;
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
-      doc.text('Note : Prices are subjected to change without prior notice.', M, ty); ty += 6;
-      doc.setFont('helvetica', 'normal');
-      doc.text('We hope that our quotation is favourable to you and looking forward to receive your valued orders in due course.', M, ty); ty += 5;
-      doc.text('Thank and regards.', M, ty); ty += 10;
+      doc.setFont('times', 'bold'); doc.setFontSize(9);
+      doc.text('Note : Prices are subjected to change without prior notice.', M, ty); ty += 7;
+      doc.setFont('times', 'normal');
+      doc.text('We hope that our quotation is favourable to you and looking forward to receive your valued orders in due course.', M, ty); ty += 5.5;
+      doc.text('Thank and regards.', M, ty); ty += 11;
 
       doc.text('Yours faithfully,', M, ty);
-      // confirmation block (right)
-      doc.text('We confirm the order by accepting the terms', pageW - 80, ty);
-      doc.text('& conditions stated above.', pageW - 80, ty + 4);
-      ty += 22;
+      doc.text('We confirm the order by accepting the terms', pageW - 82, ty);
+      doc.text('& conditions stated above.', pageW - 82, ty + 4.5);
+      ty += 24;
       doc.setLineWidth(0.3); doc.setDrawColor(120);
-      doc.line(M, ty, M + 55, ty);
-      doc.text('Authorised Signature', M, ty + 4);
-      doc.line(pageW - 70, ty, pageW - 12, ty);
-      doc.text('Person incharge :', pageW - 70, ty + 4);
-      doc.text('Date :', pageW - 70, ty + 9);
+      doc.line(M, ty, M + 58, ty);
+      doc.text('Authorised Signature', M, ty + 4.5);
+      doc.line(pageW - 72, ty, pageW - 12, ty);
+      doc.text('Person incharge :', pageW - 72, ty + 4.5);
+      doc.text('Date :', pageW - 72, ty + 9.5);
     } else {
       // ----- Invoice footer -----
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+      doc.setFont('times', 'normal'); doc.setFontSize(9.5);
       const words = amountToWords(activeInvoice.total, settings.currencyWords);
-      const wLines = doc.splitTextToSize(words, pageW - 80);
+      const wLines = doc.splitTextToSize(words, pageW - 82);
       doc.text(wLines, M, ty);
 
-      const tX = pageW - 70, vX = pageW - M;
+      const tX = pageW - 62, vX = pageW - M;
       const totals = [
         ['Gross (' + cur + ')', fmtMoney(activeInvoice.gross)],
         ['Sales Tax (' + cur + ')', fmtMoney(activeInvoice.tax)],
         ['Total (' + cur + ')', fmtMoney(activeInvoice.total)],
       ];
+      let tyTot = ty;
       totals.forEach(([k, v], i) => {
-        if (i === 2) doc.setFont('helvetica', 'bold'); else doc.setFont('helvetica', 'normal');
-        doc.text(k, tX, ty); doc.text(v, vX, ty, { align: 'right' });
-        ty += 5;
+        doc.setFont('times', i === 2 ? 'bold' : 'normal');
+        doc.text(k, tX, tyTot); doc.text(v, vX, tyTot, { align: 'right' });
+        tyTot += 5.5;
       });
+      ty = Math.max(ty + wLines.length * 5, tyTot) + 6;
 
-      ty += 6;
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
-      doc.text('Notes:', M, ty); ty += 4;
-      (settings.notes || '').split('\n').forEach((ln) => { if (ln) { doc.text(ln, M, ty); ty += 4; } });
+      doc.setFont('times', 'normal'); doc.setFontSize(8.5);
+      doc.text('Notes:', M, ty); ty += 4.5;
+      (settings.notes || '').split('\n').forEach((ln) => { if (ln) { doc.text(ln, M, ty); ty += 4.5; } });
 
-      ty += 14;
+      ty += 16;
       doc.setLineWidth(0.3); doc.setDrawColor(120);
-      doc.line(M, ty, M + 55, ty);
-      doc.text('Authorised Signature', M, ty + 4);
+      doc.line(M, ty, M + 58, ty);
+      doc.text('Authorised Signature', M, ty + 4.5);
     }
 
     const prefix = isQuote ? 'Quotation' : 'Invoice';
