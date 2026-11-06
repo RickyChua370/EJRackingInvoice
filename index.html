@@ -10,7 +10,7 @@
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <link rel="stylesheet" href="styles.css?v=1.3.2" />
+  <link rel="stylesheet" href="styles.css?v=1.4.0" />
 
   <!-- Libraries via CDN -->
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
@@ -127,6 +127,53 @@ Person in Charge: Fion"></textarea>
         </div>
         <p class="hint">Adjust the rate (based on quantity / canvas) and charges, then build the quotation. You can still edit every line afterwards.</p>
         <button id="buildQuoteBtn" class="btn primary">Build quotation &rarr;</button>
+      </div>
+
+      <!-- ===== Tiered Price Calculator ===== -->
+      <div class="card">
+        <h2>Price calculator</h2>
+        <p class="hint">Tiered pricing &mdash; extra bins/days are charged at lower step rates. Enter the order below.</p>
+
+        <div class="two-col">
+          <div class="col">
+            <div class="field inline"><label>Offer bin qty</label><input type="number" id="calcBinQty" min="0" step="1" value="12" /></div>
+            <div class="field inline"><label>Canvas qty</label><input type="number" id="calcCanvasQty" min="0" step="1" value="0" /></div>
+            <div class="field inline"><label>Days rental</label><input type="number" id="calcDays" min="1" step="1" value="2" /></div>
+          </div>
+          <div class="col">
+            <div class="field inline">
+              <label>Delivery distance</label>
+              <select id="calcDelivery">
+                <option value="free">&lt; 15 KM (Free)</option>
+                <option value="100">15 - 40 KM (RM100)</option>
+                <option value="200">40 - 70 KM (RM200)</option>
+                <option value="quote">&gt; 70 KM (Quote)</option>
+              </select>
+            </div>
+            <div class="field inline">
+              <label>Installation time</label>
+              <select id="calcInstallSlot">
+                <option value="6am-10am">6am - 10am</option>
+                <option value="10am-6pm" selected>10am - 6pm</option>
+                <option value="6pm-10pm">6pm - 10pm</option>
+                <option value="10pm-6am">10pm - 6am</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <button id="calcBtn" class="btn primary">Calculate</button>
+
+        <div id="calcResult" style="display:none">
+          <table class="calc-table" id="calcBreakdown"></table>
+
+          <h3 style="margin-top:16px">Old vs. new price comparison</h3>
+          <p class="hint">Old price = flat rate per piece/day (editable), +RM5/pc/day for canvas.</p>
+          <div class="field inline"><label>Old bin rate (RM/pc/day)</label><input type="number" id="calcOldRate" step="0.01" value="5" /></div>
+          <div class="field inline"><label>Old canvas rate (RM/pc/day)</label><input type="number" id="calcOldCanvasRate" step="0.01" value="5" /></div>
+          <table class="calc-table" id="calcCompare"></table>
+
+          <button id="calcToQuoteBtn" class="btn ghost" style="margin-top:12px">Use these prices in a quotation &rarr;</button>
+        </div>
       </div>
     </section>
 
@@ -312,7 +359,7 @@ Person in Charge: Fion"></textarea>
 
   <div id="toast" class="toast hidden"></div>
 
-  <script src="app.js?v=1.3.2"></script>
+  <script src="app.js?v=1.4.0"></script>
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => navigator.serviceWorker.register('sw.js'));

@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '1.3.2';
+  const APP_VERSION = '1.4.0';
 
   // ---------- Defaults / storage ----------
   const DEFAULT_SETTINGS = {
@@ -381,6 +381,76 @@
     return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
 
+  // ---------- Offer Bin tiered pricing ----------
+  // Rates are per piece per day. Columns = day brackets [1-3, 4-7, 8-14, 15+].
+  // Rows = quantity brackets [1-5, 6-10, 11-20, 21-49, 50+].
+  const PRICING = {
+    bin: {
+      d13:  [10, 7, 6, 5, 5],
+      d47:  [7, 6, 5.5, 5, 4.5],
+      d814: [5, 4.5, 4, 3.5, 3],
+      d15:  [3.5, 3, 3, 2.5, 2],
+    },
+    canvas: {
+      d13:  [5, 5, 5, 4.5, 4],
+      d47:  [4.5, 4, 3.5, 3.5, 3],
+      d814: [3, 3, 2.5, 2.5, 2],
+      d15:  [2.5, 2, 1.5, 1.5, 1],
+    },
+  };
+  // Marginal quantity bracket sizes: 1-5 (5), 6-10 (5), 11-20 (10), 21-49 (29), 50+ (rest)
+  const QTY_BRACKETS = [5, 5, 10, 29, Infinity];
+
+  // Installation charge: qty bracket (index) x time slot. 1-5 row = 'Lalamove' (manual).
+  const INSTALL = {
+    '6am-10am': ['Lalamove', 150, 200, 400, 600],
+    '10am-6pm': ['Lalamove', 100, 150, 200, 300],
+    '6pm-10pm': ['Lalamove', 150, 200, 400, 600],
+    '10pm-6am': ['Lalamove', 250, 300, 500, 650],
+  };
+
+  // Which quantity bracket index does a given qty fall into (for installation lookup)?
+  function qtyBracketIndex(qty) {
+    if (qty <= 5) return 0;
+    if (qty <= 10) return 1;
+    if (qty <= 20) return 2;
+    if (qty <= 49) return 3;
+    return 4;
+  }
+
+  // One day's cost for the whole order using a given rate row (marginal across qty).
+  function perDayCost(qty, rateRow) {
+    let remaining = qty, cost = 0;
+    for (let i = 0; i < QTY_BRACKETS.length && remaining > 0; i++) {
+      const take = Math.min(remaining, QTY_BRACKETS[i]);
+      cost += take * rateRow[i];
+      remaining -= take;
+    }
+    return cost;
+  }
+
+  // How many of N days fall in each day bracket.
+  function dayAlloc(days) {
+    return {
+      d13: Math.min(days, 3),
+      d47: Math.min(Math.max(days - 3, 0), 4),
+      d814: Math.min(Math.max(days - 7, 0), 7),
+      d15: Math.max(days - 14, 0),
+    };
+  }
+
+  // Full tiered total for qty items over N days, using the given rate table.
+  function tieredTotal(qty, days, table) {
+    if (qty <= 0 || days <= 0) return 0;
+    const a = dayAlloc(days);
+    return +(
+      perDayCost(qty, table.d13) * a.d13 +
+      perDayCost(qty, table.d47) * a.d47 +
+      perDayCost(qty, table.d814) * a.d814 +
+      perDayCost(qty, table.d15) * a.d15
+    ).toFixed(2);
+  }
+
   // ---------- Offer Bin quotation ----------
   const OFFER_BIN_SAMPLE = [
     'Company Name: Private Structure International Sdn Bhd',
@@ -577,6 +647,127 @@
     loadInvoiceIntoEditor(quote);
     goTo('invoice');
     toast('Quotation generated. Review & edit, then Export PDF.');
+  });
+
+  // ---------- Price calculator ----------
+  let lastCalc = null;
+
+  function fmt2(n) { return parseNum(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function pctDiff(oldV, newV) {
+    if (!oldV) return newV ? '+\u221e' : '0.0%';
+    const d = ((newV - oldV) / oldV) * 100;
+    const sign = d > 0 ? '+' : '';
+    return sign + d.toFixed(1) + '%';
+  }
+
+  function runCalculator() {
+    const binQty = parseInt($('#calcBinQty').value, 10) || 0;
+    const canvasQty = parseInt($('#calcCanvasQty').value, 10) || 0;
+    const days = parseInt($('#calcDays').value, 10) || 0;
+    const deliveryVal = $('#calcDelivery').value;
+    const slot = $('#calcInstallSlot').value;
+
+    // Tiered (new) rental
+    const binTotal = tieredTotal(binQty, days, PRICING.bin);
+    const canvasTotal = tieredTotal(canvasQty, days, PRICING.canvas);
+    const rentalNew = +(binTotal + canvasTotal).toFixed(2);
+
+    // Delivery
+    let delivery = 0, deliveryLabel = '';
+    if (deliveryVal === 'free') { delivery = 0; deliveryLabel = 'Free (< 15 KM)'; }
+    else if (deliveryVal === 'quote') { delivery = 0; deliveryLabel = 'Quote (> 70 KM)'; }
+    else { delivery = parseNum(deliveryVal); deliveryLabel = 'RM ' + fmt2(delivery); }
+
+    // Installation (by qty bracket of the bins + time slot)
+    const instRow = INSTALL[slot] || INSTALL['10am-6pm'];
+    const instCell = instRow[qtyBracketIndex(binQty)];
+    const installIsManual = (instCell === 'Lalamove');
+    const install = installIsManual ? 0 : parseNum(instCell);
+    const installLabel = installIsManual ? 'Lalamove (manual)' : 'RM ' + fmt2(install);
+
+    const grandNew = +(rentalNew + delivery + install).toFixed(2);
+
+    // ----- Breakdown table -----
+    const bd = $('#calcBreakdown');
+    bd.innerHTML = `
+      <tr><th colspan="2">Breakdown (${days} day${days===1?'':'s'})</th></tr>
+      <tr><td>Offer bin (${binQty} pcs, tiered)</td><td class="num">${fmt2(binTotal)}</td></tr>
+      <tr><td>Canvas (${canvasQty} pcs, tiered)</td><td class="num">${fmt2(canvasTotal)}</td></tr>
+      <tr class="sub"><td>Rental subtotal</td><td class="num">${fmt2(rentalNew)}</td></tr>
+      <tr><td>Delivery &mdash; ${deliveryLabel}</td><td class="num">${fmt2(delivery)}</td></tr>
+      <tr><td>Installation &mdash; ${slot} &mdash; ${installLabel}</td><td class="num">${fmt2(install)}</td></tr>
+      <tr class="grand"><td>Grand total</td><td class="num">${fmt2(grandNew)}</td></tr>
+    `;
+
+    // ----- Old vs new comparison -----
+    const oldRate = parseNum($('#calcOldRate').value);
+    const oldCanvasRate = parseNum($('#calcOldCanvasRate').value);
+    const oldBin = +(oldRate * binQty * days).toFixed(2);
+    const oldCanvas = +(oldCanvasRate * canvasQty * days).toFixed(2);
+    const oldRental = +(oldBin + oldCanvas).toFixed(2);
+    const oldGrand = +(oldRental + delivery + install).toFixed(2);
+
+    const cmp = $('#calcCompare');
+    cmp.innerHTML = `
+      <tr><th></th><th class="num">Old</th><th class="num">New</th><th class="num">Diff</th></tr>
+      <tr><td>Rental only</td><td class="num">${fmt2(oldRental)}</td><td class="num">${fmt2(rentalNew)}</td><td class="num ${rentalNew<=oldRental?'down':'up'}">${pctDiff(oldRental, rentalNew)}</td></tr>
+      <tr><td>Grand total</td><td class="num">${fmt2(oldGrand)}</td><td class="num">${fmt2(grandNew)}</td><td class="num ${grandNew<=oldGrand?'down':'up'}">${pctDiff(oldGrand, grandNew)}</td></tr>
+    `;
+
+    // Save for "use in quotation" — derive per-day unit prices for the quote lines.
+    lastCalc = {
+      binQty, canvasQty, days,
+      binTotal, canvasTotal,
+      binPerDay: days ? +(binTotal / days).toFixed(2) : 0,
+      canvasPerDay: days ? +(canvasTotal / days).toFixed(2) : 0,
+      delivery, deliveryLabel, install, installIsManual, slot,
+    };
+
+    $('#calcResult').style.display = 'block';
+    $('#calcResult').scrollIntoView({ behavior: 'smooth' });
+  }
+
+  $('#calcBtn').addEventListener('click', runCalculator);
+  // Recompute comparison live when old rates change (only if a result is showing).
+  ['#calcOldRate', '#calcOldCanvasRate'].forEach((sel) => {
+    $(sel).addEventListener('input', () => { if ($('#calcResult').style.display !== 'none') runCalculator(); });
+  });
+
+  // Feed calculator result into a quotation.
+  $('#calcToQuoteBtn').addEventListener('click', () => {
+    if (!lastCalc) return;
+    const quote = blankInvoice('quotation');
+    quote.date = formatToday();
+    quote.qtPayment = 'C.O.D.';
+    const items = [];
+    let n = 1;
+    items.push({
+      no: n++, code: 'RENTAL',
+      desc: `OFFER BIN ONLY ( USED ) ${lastCalc.days} DAYS X ${lastCalc.binQty} UNITS ( TIERED )`,
+      qty: lastCalc.days, unit: 'DAYS', price: lastCalc.binPerDay, discount: '', amount: lastCalc.binTotal,
+    });
+    if (lastCalc.canvasQty > 0) {
+      items.push({
+        no: n++, code: 'RENTAL',
+        desc: `CANVAS ${lastCalc.days} DAYS X ${lastCalc.canvasQty} PCS ( TIERED )`,
+        qty: lastCalc.days, unit: 'DAYS', price: lastCalc.canvasPerDay, discount: '', amount: lastCalc.canvasTotal,
+      });
+    }
+    items.push({
+      no: n++, code: 'SERVICES',
+      desc: 'SERVICES - TRANSPORT ( DAY ONLY 10AM - 6.30PM )',
+      qty: 1, unit: 'UNIT', price: lastCalc.delivery, discount: '', amount: lastCalc.delivery,
+    });
+    items.push({
+      no: n++, code: 'OTHER',
+      desc: `INCLUDING INSTALLATION / DISMANTLE ( ${lastCalc.slot}${lastCalc.installIsManual ? ' , LALAMOVE' : ''} )`,
+      qty: 1, unit: 'UNIT', price: lastCalc.install, discount: '', amount: lastCalc.install,
+    });
+    quote.items = items;
+    recalc(quote);
+    loadInvoiceIntoEditor(quote);
+    goTo('invoice');
+    toast('Quotation created from calculator. Review & edit, then Export PDF.');
   });
 
   // ---------- Invoice editor ----------
